@@ -1,0 +1,414 @@
+name: ma-food-910
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    environment:
+      RABBITMQ_DEFAULT_USER: student
+      RABBITMQ_DEFAULT_PASS: student
+    ports:
+    - 127.0.0.1:5672:5672
+    - 127.0.0.1:15672:15672
+    volumes:
+    - rabbit-data:/var/lib/rabbitmq
+    healthcheck:
+      test:
+      - CMD
+      - rabbitmq-diagnostics
+      - -q
+      - ping
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  orders-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: orders_db
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: orders
+    ports:
+    - 127.0.0.1:15431:5432
+    volumes:
+    - orders-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U orders -d orders_db
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  notifications-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notifications_db
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: notifications
+    ports:
+    - 127.0.0.1:15432:5432
+    volumes:
+    - notifications-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U notifications -d notifications_db
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  orders:
+    build:
+      context: .
+      dockerfile: docker/orders.Dockerfile
+    image: ma-food-910-orders:lab
+    environment: &id001
+      DATABASE_URL: postgresql://orders:orders@orders-db:5432/orders_db
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+    ports:
+    - 127.0.0.1:8001:8000
+    depends_on:
+      orders-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command:
+    - python
+    - -m
+    - extension.main
+    - orders
+    - http
+  notifications:
+    build:
+      context: .
+      dockerfile: docker/notifications.Dockerfile
+    image: ma-food-910-notifications:lab
+    environment: &id002
+      DATABASE_URL: postgresql://notifications:notifications@notifications-db:5432/notifications_db
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+    ports:
+    - 127.0.0.1:8002:8000
+    depends_on:
+      notifications-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    command:
+    - python
+    - -m
+    - extension.main
+    - notifications
+    - http
+  publisher:
+    image: ma-food-910-orders:lab
+    command:
+    - python
+    - -m
+    - extension.main
+    - orders
+    - publisher
+    environment: *id001
+    depends_on:
+      orders:
+        condition: service_started
+  orders-worker:
+    image: ma-food-910-orders:lab
+    command:
+    - python
+    - -m
+    - extension.main
+    - orders
+    - consumer
+    environment: *id001
+    depends_on:
+      orders:
+        condition: service_started
+  notifications-worker:
+    image: ma-food-910-notifications:lab
+    command:
+    - python
+    - -m
+    - extension.main
+    - notifications
+    - consumer
+    environment: *id002
+    depends_on:
+      notifications:
+        condition: service_started
+  added-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lab_admin
+      POSTGRES_PASSWORD: local_admin
+      POSTGRES_DB: postgres
+    ports:
+    - 127.0.0.1:15433:5432
+    volumes:
+    - added-data:/var/lib/postgresql/data
+    - ./docker/init.sql:/docker-entrypoint-initdb.d/01-additions.sql:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - PGPASSWORD=lab_test psql -h 127.0.0.1 -U lab_test -d food_tests -qAtc 'SELECT 1' | grep -qx 1
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  profiles:
+    build:
+      context: .
+      dockerfile: docker/profiles.Dockerfile
+    image: ma-food-910-profiles:lab
+    environment:
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      DATABASE_URL: postgresql://profiles:profiles_lab@added-db:5432/profiles_db
+    ports:
+    - 127.0.0.1:8003:8000
+    command:
+    - python
+    - -m
+    - extension.main
+    - profiles
+    depends_on:
+      added-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  catalog:
+    build:
+      context: .
+      dockerfile: docker/catalog.Dockerfile
+    image: ma-food-910-catalog:lab
+    environment:
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      DATABASE_URL: postgresql://catalog:catalog_lab@added-db:5432/catalog_db
+    ports:
+    - 127.0.0.1:8004:8000
+    command:
+    - python
+    - -m
+    - extension.main
+    - catalog
+    depends_on:
+      added-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  kitchen:
+    build:
+      context: .
+      dockerfile: docker/kitchen.Dockerfile
+    image: ma-food-910-kitchen:lab
+    environment:
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      DATABASE_URL: postgresql://kitchen:kitchen_lab@added-db:5432/kitchen_db
+    ports:
+    - 127.0.0.1:8005:8000
+    command:
+    - python
+    - -m
+    - extension.main
+    - kitchen
+    depends_on:
+      added-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  delivery:
+    build:
+      context: .
+      dockerfile: docker/delivery.Dockerfile
+    image: ma-food-910-delivery:lab
+    environment:
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      DATABASE_URL: postgresql://delivery:delivery_lab@added-db:5432/delivery_db
+    ports:
+    - 127.0.0.1:8006:8000
+    command:
+    - python
+    - -m
+    - extension.main
+    - delivery
+    depends_on:
+      added-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  payments:
+    build:
+      context: .
+      dockerfile: docker/payments.Dockerfile
+    image: ma-food-910-payments:lab
+    environment:
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      DATABASE_URL: postgresql://payments:payments_lab@added-db:5432/payments_db
+    ports:
+    - 127.0.0.1:8007:8000
+    command:
+    - python
+    - -m
+    - extension.main
+    - payments
+    depends_on:
+      added-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  reviews:
+    build:
+      context: .
+      dockerfile: docker/reviews.Dockerfile
+    image: ma-food-910-reviews:lab
+    environment:
+      ORDERS_URL: http://orders:8000
+      NOTIFICATIONS_URL: http://notifications:8000
+      PROFILES_URL: http://profiles:8000
+      CATALOG_URL: http://catalog:8000
+      KITCHEN_URL: http://kitchen:8000
+      DELIVERY_URL: http://delivery:8000
+      PAYMENTS_URL: http://payments:8000
+      REVIEWS_URL: http://reviews:8000
+      PROVIDER_SECRET: local-study-secret
+      AMQP_URL: amqp://student:student@rabbitmq:5672/
+      DATABASE_URL: postgresql://reviews:reviews_lab@added-db:5432/reviews_db
+    ports:
+    - 127.0.0.1:8008:8000
+    command:
+    - python
+    - -m
+    - extension.main
+    - reviews
+    depends_on:
+      added-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  ci-tests:
+    image: ma-food-910-orders:lab
+    profiles: [ci]
+    working_dir: /work
+    volumes:
+      - .:/work
+    environment:
+      TEST_POSTGRES_URL: postgresql://lab_test:lab_test@added-db:5432/food_tests
+      TEST_AMQP_URL: amqp://student:student@rabbitmq:5672/
+      PYTHONDONTWRITEBYTECODE: "1"
+    command: [python, ci/verify_tests.py]
+
+volumes:
+  rabbit-data: null
+  orders-data: null
+  notifications-data: null
+  added-data: null

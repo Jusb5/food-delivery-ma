@@ -1,0 +1,98 @@
+name: Food delivery CI and CD
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested commit from the default branch
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all eight images
+        run: docker compose build orders notifications profiles catalog kitchen delivery payments reviews
+      - name: Start PostgreSQL and RabbitMQ
+        run: docker compose up -d --wait --wait-timeout 120 added-db rabbitmq
+      - name: Run PR8 suites
+        run: docker compose run --rm --no-deps -T ci-tests
+      - name: Store tested images for publication
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+        run: docker save ma-food-910-orders:lab ma-food-910-notifications:lab -o tested-images.tar
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+        with:
+          name: tested-images
+          path: tested-images.tar
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            evidence/test-summary.json
+            evidence/*-output.txt
+      - name: Stop test infrastructure
+        if: always()
+        run: docker compose down -v
+
+  dockerhub:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-images
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Push OrderService
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/food-orders:${{ github.sha }}
+        run: |
+          docker load -i tested-images.tar
+          docker tag ma-food-910-orders:lab "$IMAGE"
+          docker push "$IMAGE"
+
+  yandex:
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    concurrency:
+      group: food-notifications-yandex
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tested-images
+      - uses: yc-actions/yc-cr-login@v3
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_KEYS }}
+      - name: Push NotificationService to Container Registry
+        env:
+          IMAGE: cr.yandex/${{ secrets.YC_REGISTRY_ID }}/food-notifications:${{ github.sha }}
+        run: |
+          docker load -i tested-images.tar
+          docker tag ma-food-910-notifications:lab "$IMAGE"
+          docker push "$IMAGE"
+      - name: Deploy private NotificationService revision
+        uses: yc-actions/yc-sls-container-deploy@v5
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_KEYS }}
+          container-name: ${{ vars.YC_CONTAINER_NAME }}
+          folder-id: ${{ secrets.YC_FOLDER_ID }}
+          revision-service-account-id: ${{ secrets.YC_SA_ID }}
+          revision-network-id: ${{ vars.YC_NETWORK_ID }}
+          revision-image-url: cr.yandex/${{ secrets.YC_REGISTRY_ID }}/food-notifications:${{ github.sha }}
+          revision-memory: 256Mb
+          revision-execution-timeout: '15'
+          revision-secrets: DATABASE_URL=${{ vars.YC_DB_SECRET_ID }}/${{ vars.YC_DB_SECRET_VERSION }}/database_url

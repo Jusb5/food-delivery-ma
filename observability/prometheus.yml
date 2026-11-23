@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: orders
+    static_configs:
+      - targets: ['orders:8000']
+  - job_name: notifications
+    static_configs:
+      - targets: ['notifications:8000']
+  - job_name: profiles
+    static_configs:
+      - targets: ['profiles:8000']
+  - job_name: catalog
+    static_configs:
+      - targets: ['catalog:8000']
+  - job_name: kitchen
+    static_configs:
+      - targets: ['kitchen:8000']
+  - job_name: delivery
+    static_configs:
+      - targets: ['delivery:8000']
+  - job_name: payments
+    static_configs:
+      - targets: ['payments:8000']
+  - job_name: reviews
+    static_configs:
+      - targets: ['reviews:8000']

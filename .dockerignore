@@ -1,0 +1,8 @@
+.git
+.github
+.venv
+.env
+.env.*
+**/__pycache__
+evidence
+*.zip
