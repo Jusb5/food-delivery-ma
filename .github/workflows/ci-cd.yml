@@ -8,6 +8,14 @@ on:
         description: Publish the tested commit from the default branch
         type: boolean
         default: false
+      destination:
+        description: Registry or cloud deployment to run when publish is enabled
+        type: choice
+        default: both
+        options:
+          - both
+          - dockerhub
+          - yandex
 
 permissions:
   contents: read
@@ -45,7 +53,7 @@ jobs:
 
   dockerhub:
     needs: ci
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch && (inputs.destination == 'both' || inputs.destination == 'dockerhub')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -65,7 +73,7 @@ jobs:
 
   yandex:
     needs: ci
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref_name == github.event.repository.default_branch && (inputs.destination == 'both' || inputs.destination == 'yandex')
     runs-on: ubuntu-latest
     concurrency:
       group: food-notifications-yandex
